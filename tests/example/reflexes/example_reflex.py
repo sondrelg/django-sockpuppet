@@ -9,3 +9,8 @@ class ExampleReflex(Reflex):
 class DecrementReflex(Reflex):
     def decrement(self, step=1):
         self.session['otherCount'] = int(self.element.dataset['count']) - step
+
+
+class MorphReflex(Reflex):
+    def morph_me(self):
+        self.morph('#morph', 'I got morphed!')

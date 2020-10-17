@@ -146,13 +146,28 @@ class SockpuppetConsumer(JsonWebsocketConsumer):
         url = data['url']
         selectors = data['selectors'] if data['selectors'] else ['body']
         target = data['target']
+        identifier = data['identifier']
         reflex_name, method_name = target.split('#')
         reflex_name = classify(reflex_name)
         arguments = data['args'] if data.get('args') else []
         element = Element(data['attrs'])
+
+        # TODO can be removed once stimulus-reflex has increased a couple of versions
+        permanent_attribute_name = data.get('permanent_attribute_name')
+        if not permanent_attribute_name:
+            # Used in stimulus-reflex >= 3.4
+            permanent_attribute_name = data['permanentAttributeName']
+
         try:
             ReflexClass = self.reflexes.get(reflex_name)
-            reflex = ReflexClass(self, url=url, element=element, selectors=selectors)
+            reflex = ReflexClass(
+                self, url=url,
+                element=element,
+                selectors=selectors,
+                identifier=identifier,
+                reflex_id=data['reflexId'],
+                permanent_attribute_name=permanent_attribute_name
+            )
             self.delegate_call_to_reflex(reflex, method_name, arguments)
         except Exception as e:
             error = '{}: {}'.format(e.__class__.__name__, str(e))
@@ -173,7 +188,7 @@ class SockpuppetConsumer(JsonWebsocketConsumer):
             )
             self.broadcast_error(message, data, reflex)
             _, _, traceback = sys.exc_info()
-            exc = SockpuppetError(msg)
+            exc = SockpuppetError(message)
             raise exc.with_traceback(traceback)
 
         logger.debug('Reflex took %6.2fms', (time.perf_counter() - start) * 1000)
@@ -214,6 +229,10 @@ class SockpuppetConsumer(JsonWebsocketConsumer):
             print('Unsupported')
 
     def render_page_and_broadcast_morph(self, reflex, selectors, data):
+        if reflex.is_morph:
+            # The reflex has already sent a message so consumer doesn't need to.
+            return
+
         html = self.render_page(reflex)
         if html:
             self.broadcast_morphs(selectors, data, html, reflex)
@@ -245,7 +264,7 @@ class SockpuppetConsumer(JsonWebsocketConsumer):
         document = BeautifulSoup(html)
         selectors = [selector for selector in selectors if document.select(selector)]
 
-        channel = Channel(reflex.get_channel_id(), identifier=data['identifier'])
+        broadcaster = Channel(reflex.get_channel_id(), identifier=data['identifier'])
         logger.debug('Broadcasting to %s', reflex.get_channel_id())
 
         # TODO can be removed once stimulus-reflex has increased a couple of versions
@@ -255,14 +274,14 @@ class SockpuppetConsumer(JsonWebsocketConsumer):
             permanent_attribute_name = data['permanentAttributeName']
 
         for selector in selectors:
-            channel.morph({
+            broadcaster.morph({
                 'selector': selector,
                 'html': ''.join([e.decode_contents() for e in document.select(selector)]),
                 'children_only': True,
                 'permanent_attribute_name': permanent_attribute_name,
                 'stimulus_reflex': {**data}
             })
-        channel.broadcast()
+        broadcaster.broadcast()
 
     def delegate_call_to_reflex(self, reflex, method_name, arguments):
         method = getattr(reflex, method_name)
